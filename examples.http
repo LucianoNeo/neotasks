@@ -1,0 +1,38 @@
+@base = http://localhost:5081
+@token = paste-token-from-registration
+@project = paste-project-id
+@task = paste-task-id
+
+### Register a fictional organization; password is a local example
+POST {{base}}/auth/register
+Content-Type: application/json
+
+{"organization":"Demo Guild","email":"neo@example.test","password":"DemoPassword123!"}
+
+### Create project as Owner
+POST {{base}}/api/projects
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"name":"Quest board"}
+
+### Create task
+POST {{base}}/api/projects/{{project}}/tasks
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"title":"Build the API"}
+
+### Record one hour
+POST {{base}}/api/tasks/{{task}}/time
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"seconds":3600}
+
+### Complete task; replay with version 1 returns 409
+PUT {{base}}/api/tasks/{{task}}
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"completed":true,"version":1}

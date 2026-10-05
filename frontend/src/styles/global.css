@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+:root {
+    
+    --toastify-color-success: #ff9130;
+    --toastify-color-error: #e74c3c;
+    --toastify-font-family: 'Poppins';
+    --toastify-toast-min-height: 84px;
+    --toastify-color-dark: #0C0B10;
+}
+
+body{
+    color: white;
+    background-color: #0C0B10;
+    font-family: 'Poppins';
+    box-sizing: border-box;
+}
+
+*::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+    border-radius: 10px;
+}
+
+*::-webkit-scrollbar-track {
+    background: #121214;
+    border-radius: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+    background-color: #DE8F45;
+    border-radius: 10px;
+    border: 2px solid #DE8F45;
+
+}
+
+table tr:nth-child(2n) {
+    background-color: #111;
+  }
+

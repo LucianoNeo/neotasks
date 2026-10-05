@@ -1,0 +1,42 @@
+import { useContext, useState } from 'react';
+import { AuthContext } from '../contexts/AuthContext';
+import CreateMemberModal from './CreateMemberModal';
+import { useMyContext } from '../contexts/MyContext';
+import ColabCard from './ColabCard';
+
+
+
+function Collaborators() {
+    const { role } = useContext(AuthContext);
+    const [visible, setVisible] = useState(false);
+    const { collaborators, tasks } = useMyContext()
+
+    function countTasksByCollaborator(collab: string) {
+        return tasks.filter(task => task.TimeTracker.some((tracker: any) => tracker.collaborator?.id === collab)).length;
+    }
+
+
+
+    return (
+        <>
+            <main className="text-white flex h-[85vh] flex-col w-[85%] md:w-[90%] text-end ml-12 md:mx-auto overflow-hidden bg-slate-900 md:mt-4">
+                <div className="flex bg-gradient-to-r from-orange-400 to-orange-600 px-4 py-2 rounded-t-xl justify-end items-start pt-2">
+                    <h1 className="text-xl md:text-3xl font-extrabold">COLABORADORES</h1>
+                </div>
+                <div className='flex flex-col h-full w-full my-8'>
+                    {collaborators!.map((collab) => (
+                        <ColabCard key={collab.id} username={collab.name} tasks={countTasksByCollaborator(String(collab.id))} />
+                    ))}
+
+                </div>
+
+
+            </main>
+            {role === 'Owner' && <button aria-label="Novo colaborador" onClick={() => setVisible(true)} className="bg-orange-600 rounded px-4 py-2 absolute bottom-5 right-10">Adicionar colaborador</button>}
+            {visible && <CreateMemberModal close={() => setVisible(false)} />}
+
+        </>
+    )
+}
+
+export default Collaborators

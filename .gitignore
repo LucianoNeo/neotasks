@@ -1,0 +1,15 @@
+# Local credentials and configuration
+.env
+# Generated build output
+**/bin/
+**/obj/
+**/node_modules/
+frontend/dist/
+**/TestResults/
+**/playwright-report/
+**/test-results/
+*.log
+# Local database files
+**/*.db
+**/*.db-shm
+**/*.db-wal
