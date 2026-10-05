@@ -1,7 +1,5 @@
 # NeoTasks — React + .NET
 
-[![NeoTasks checks](https://github.com/LucianoNeo/neotasks/actions/workflows/ci.yml/badge.svg)](https://github.com/LucianoNeo/neotasks/actions/workflows/ci.yml)
-
 NeoTasks é uma aplicação full stack de tarefas e apontamento de horas. Juntei a interface React do desafio original a uma API em C#/.NET. O projeto permite criar uma organização, cadastrar colaboradores, organizar tarefas por projeto e registrar o tempo de trabalho. Mantive o visual e os componentes da interface original e adaptei o contrato para o novo backend. Incluí recuperação de senha por e-mail, confirmação de endereço, renovação de sessão, auditoria e busca paginada.
 
 ## Para avaliar o projeto
@@ -24,8 +22,9 @@ Um roteiro de cinco minutos:
 4. Use Iniciar e Finalizar para registrar o tempo, ou informe um período já trabalhado.
 5. Confira o Dashboard e o Relatório. Saia e entre como colaborador para comparar as permissões.
 6. Abra **http://localhost:8025**: a caixa Mailpit recebe os e-mails desta instalação. Use a mensagem de confirmação para validar seu endereço.
-7. No login, escolha **Esqueci minha senha**, abra o e-mail na caixa e defina uma nova senha. O link expira em uma hora e só pode ser usado uma vez.
-8. Entre como Owner e consulte **Auditoria**. Use a busca e as páginas em Projetos e Tarefas.
+7. Ao atribuir uma tarefa, o worker envia uma notificação para o mesmo Mailpit; confira a mensagem na caixa de entrada.
+8. No login, escolha **Esqueci minha senha**, abra o e-mail na caixa e defina uma nova senha. O link expira em uma hora e só pode ser usado uma vez.
+9. Entre como Owner e consulte **Auditoria**. Use a busca e as páginas em Projetos e Tarefas.
 
 O Docker baixa e compila as imagens na primeira execução. A API aguarda a criação do banco e a interface aguarda a API ficar saudável. A porta da API fica apenas na rede interna; o Nginx encaminha as chamadas da interface.
 
@@ -45,39 +44,49 @@ Se a porta 8080 estiver ocupada, copie `.env.example` para `.env` e mude `NEOTAS
 | Pasta/arquivo | Responsabilidade |
 | --- | --- |
 | `frontend/` | React 18, TypeScript, Vite e Tailwind; interface original adaptada |
-| `NeoTasks.Api/` | ASP.NET Core .NET 10, EF Core e PostgreSQL |
+| `NeoTasks.Api/` | ASP.NET Core .NET 10, autenticação, endpoints e composição das dependências |
+| `NeoTasks.Domain/` | Entidades e regras centrais, sem dependência de EF Core |
+| `NeoTasks.Data/` | EF Core, PostgreSQL, migrations, repositórios e persistência do outbox |
+| `NeoTasks.Service/` | Casos de uso CQRS, Mediator e validação FluentValidation |
+| `NeoTasks.Worker/` | Publicação confiável do outbox no RabbitMQ e e-mails de atribuição |
 | `NeoTasks.Tests/` | Testes de integração com banco PostgreSQL real |
-| `compose.yaml` | API, PostgreSQL, Nginx, Mailpit e volume persistente |
-| `frontend/e2e/` | Playwright: cadastro, equipe, tarefas, horas, permissões, e-mail, recuperação e persistência |
+| `compose.yaml` | API, worker, PostgreSQL, Redis, RabbitMQ, Nginx e Mailpit |
 
 ```mermaid
 flowchart LR
   Browser[Navegador :8080] --> Web[React / Nginx]
   Web --> API[ASP.NET Core / JWT]
   API --> DB[(PostgreSQL 17 no volume)]
+  API --> Cache[(Redis: contagens por organização)]
+  DB --> Outbox[Outbox transacional]
+  Outbox --> Worker[Worker .NET]
+  Worker --> Rabbit[RabbitMQ]
+  Rabbit --> Mail[Mailpit / SMTP]
 ```
 
 O Nginx atende a interface e encaminha `/app-api` à API na mesma origem. Esse grupo devolve os formatos usados pelos componentes React: projetos com `Tasks`, tarefas com `TimeTracker` e colaboradores sem dados de senha. As rotas anteriores `/auth` e `/api` continuam disponíveis para clientes da API; `examples.http` mostra esse contrato. `/health` verifica disponibilidade. O OpenAPI em `/openapi/v1.json` fica disponível apenas em Development.
 
 A organização vem das claims do JWT. IDs de outra organização retornam 404. Somente Owner cria, edita ou exclui projetos e cadastra colaboradores; membros trabalham nas tarefas e nos apontamentos da própria organização. Senhas usam ASP.NET Core PasswordHasher. Tarefas e apontamentos usam controle de concorrência; uma versão de tarefa desatualizada retorna 409. Horários são armazenados em UTC e os totais consideram o fuso enviado pelo navegador, dividindo apontamentos que atravessam a meia-noite.
 
-## Validação automática
+## Testes locais
 
-O [GitHub Actions](https://github.com/LucianoNeo/neotasks/actions/workflows/ci.yml) executa os testes da API, compila as imagens e sobe o Compose num runner Linux. O fluxo de navegador percorre a interface no Chromium e reinicia os containers do banco e da API para conferir a persistência. Os relatórios e traces ficam nos artefatos da execução.
-
-Para executar esses testes em um ambiente de desenvolvimento:
+Com o SDK .NET 10 e o Docker ativos, inicie o PostgreSQL de desenvolvimento antes dos testes. O usuário `neotasks` do Compose pode criar o banco temporário isolado usado por cada execução:
 
 ```sh
-# Na raiz do repositório:
-# O runner usa PostgreSQL real; localmente configure uma instância de testes.
-# PowerShell: $env:NEOTASKS_TEST_DATABASE='Host=localhost;Database=postgres;Username=postgres;Password=sua-senha'
-# O usuário de teste deve poder criar e excluir bancos isolados.
-dotnet test NeoTasks.Tests
-# Com o Compose em execução:
-cd frontend
-npm ci
-npx playwright install chromium
-npm run test:e2e
+docker compose up -d db
+```
+
+PowerShell:
+
+```powershell
+$env:NEOTASKS_TEST_DATABASE = 'Host=localhost;Database=postgres;Username=neotasks;Password=neotasks-local-only'
+dotnet test NeoTasks.Tests/NeoTasks.Tests.csproj
+```
+
+Linux/macOS:
+
+```sh
+NEOTASKS_TEST_DATABASE='Host=localhost;Database=postgres;Username=neotasks;Password=neotasks-local-only' dotnet test NeoTasks.Tests/NeoTasks.Tests.csproj
 ```
 
 Esses comandos extras são opcionais para quem quiser estudar ou modificar o código. A avaliação pelo navegador exige apenas o Compose.
@@ -98,7 +107,7 @@ Apontamentos abertos não entram no total até serem finalizados; cada apontamen
 
 ## Telas
 
-Capturas da aplicação completa, geradas no GitHub Actions com dados fictícios.
+Capturas da aplicação completa com dados fictícios.
 
 ![Visão geral](docs/images/overview.png)
 
@@ -112,4 +121,4 @@ Capturas da aplicação completa, geradas no GitHub Actions com dados fictícios
 
 A full-stack React and ASP.NET Core application for task management and time tracking. Clone this repository, run `docker compose up --build` from its root and visit **http://localhost:8080**. Create an organization first; its first user becomes Owner. Owners manage projects and team members; members manage their organization's tasks and time entries. PostgreSQL data survives container restarts through a named volume.
 
-The frontend is adapted from my original React challenge and now talks to the .NET API through Nginx. GitHub Actions builds and runs the Compose stack and verifies the browser flow. Account recovery, email confirmation, rotating sessions, audit history, server-side search/pagination and versioned EF migrations are included. Open **http://localhost:8025** to read the local demo emails. The test suite checks both fresh databases and upgrades from the previous schema.
+The solution separates API, Domain, Data, Service and Worker projects. Mediator handlers validate use cases; Redis caches tenant-scoped dashboard counts; a transactional outbox feeds RabbitMQ so task-assignment e-mails can be handled asynchronously. Account recovery, email confirmation, rotating sessions, audit history, server-side search/pagination and versioned EF migrations are included. Open **http://localhost:8025** to read the local demo emails.

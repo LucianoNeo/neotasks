@@ -6,11 +6,22 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using NeoTasks;
+using NeoTasks.Service;
+using NeoTasks.Service.Workspace;
+using NeoTasks.Service.Tasks;
 
 var builder = WebApplication.CreateBuilder(args);
 var signingKey = builder.Configuration["Jwt:Key"] ?? (builder.Environment.IsDevelopment() ? "local-demo-only-neotasks-key-32-characters" : throw new InvalidOperationException("Set Jwt__Key (32+ characters)."));
 if (Encoding.UTF8.GetByteCount(signingKey) < 32) throw new InvalidOperationException("Jwt__Key must contain at least 32 bytes.");
-builder.Services.AddDbContext<TasksDb>(o => o.UseNpgsql(builder.Configuration.GetConnectionString("Database") ?? "Host=localhost;Database=neotasks;Username=neotasks;Password=neotasks-local-only"));
+builder.Services.AddDbContext<TasksDb>(o => o.UseNpgsql(builder.Configuration.GetConnectionString("Database") ?? "Host=localhost;Database=neotasks;Username=neotasks;Password=neotasks-local-only", npgsql => npgsql.MigrationsAssembly("NeoTasks.Data")));
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379,abortConnect=false,connectTimeout=2000";
+    options.InstanceName = "neotasks:";
+});
+builder.Services.AddNeoTasksService();
+builder.Services.AddScoped<IDashboardCountsReader, DashboardCountsReader>();
+builder.Services.AddScoped<ITaskCreationRepository, TaskCreationRepository>();
 builder.Services.AddScoped<PasswordHasher<User>>();
 builder.Services.AddScoped<AccountAccess>();
 builder.Services.AddRateLimiter(o=>{o.RejectionStatusCode=429;o.AddPolicy("access",c=>System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(c.Connection.RemoteIpAddress?.ToString()??"unknown",_=>new System.Threading.RateLimiting.FixedWindowRateLimiterOptions{PermitLimit=30,Window=TimeSpan.FromMinutes(1),QueueLimit=0}));});

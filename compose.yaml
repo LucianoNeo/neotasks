@@ -14,6 +14,27 @@ services:
       timeout: 3s
       retries: 15
     restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${NEOTASKS_RABBITMQ_USER:-neotasks}
+      RABBITMQ_DEFAULT_PASS: ${NEOTASKS_RABBITMQ_PASSWORD:-neotasks-local-only}
+    ports:
+      - "127.0.0.1:${NEOTASKS_RABBITMQ_PORT:-15672}:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
   api:
     build:
       context: .
@@ -23,17 +44,40 @@ services:
       Mail__Host: mail
       PublicUrl: http://localhost:${NEOTASKS_PORT:-8080}
       ConnectionStrings__Database: Host=db;Database=neotasks;Username=neotasks;Password=${NEOTASKS_DB_PASSWORD:-neotasks-local-only}
+      ConnectionStrings__Redis: redis:6379,abortConnect=false,connectTimeout=2000
       Jwt__Key: ${NEOTASKS_JWT_KEY:-recruiter-local-only-signing-key-please-replace}
     depends_on:
       db:
         condition: service_healthy
-    restart: unless-stopped
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
       interval: 5s
       timeout: 3s
       retries: 15
       start_period: 10s
+    restart: unless-stopped
+  worker:
+    build:
+      context: .
+      dockerfile: NeoTasks.Worker/Dockerfile
+    environment:
+      ConnectionStrings__Database: Host=db;Database=neotasks;Username=neotasks;Password=${NEOTASKS_DB_PASSWORD:-neotasks-local-only}
+      RabbitMq__Host: rabbitmq
+      RabbitMq__Username: ${NEOTASKS_RABBITMQ_USER:-neotasks}
+      RabbitMq__Password: ${NEOTASKS_RABBITMQ_PASSWORD:-neotasks-local-only}
+      Mail__Host: mail
+      Mail__Port: 1025
+      Mail__From: neotasks@localhost
+    depends_on:
+      api:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      mail:
+        condition: service_started
+    restart: unless-stopped
   mail:
     image: axllent/mailpit:v1.29
     ports: ["127.0.0.1:${NEOTASKS_MAIL_PORT:-8025}:8025"]

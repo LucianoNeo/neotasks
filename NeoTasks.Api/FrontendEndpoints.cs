@@ -5,6 +5,9 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using MediatR;
+using NeoTasks.Service.Tasks;
+using NeoTasks.Service.Workspace;
 
 namespace NeoTasks;
 
@@ -28,10 +31,15 @@ public static class FrontendEndpoints
         }).RequireRateLimiting("access");
 
         var ui = app.MapGroup("/app-api").RequireAuthorization();
+        ui.AddEndpointFilter<ValidationExceptionEndpointFilter>();
         ui.MapGet("/validatetoken", () => Results.Ok(new { valid = true }));
         ui.MapGet("/projects", async (int? page,string? q, HttpContext ctx,ClaimsPrincipal actor, TasksDb db) => {var query=db.Projects.Where(x=>x.OrganizationId==Org(actor));if(!string.IsNullOrWhiteSpace(q))query=query.Where(x=>x.Name.Contains(q));ctx.Response.Headers["X-Total-Count"]=(await query.CountAsync()).ToString();return Results.Ok((await Snapshot(actor,db,page??1,q,true)).Projects);});
         ui.MapGet("/tasks", async (int? page,string? q,string? filterBy,HttpContext ctx,ClaimsPrincipal actor, TasksDb db) => {var query=TaskQuery(Org(actor),db,q,filterBy);ctx.Response.Headers["X-Total-Count"]=(await query.CountAsync()).ToString();return Results.Ok((await Snapshot(actor,db,page??1,q,false,filterBy)).Tasks);});
-        ui.MapGet("/counts",async(ClaimsPrincipal actor,TasksDb db)=>{var org=Org(actor);return Results.Ok(new{projects=await db.Projects.CountAsync(p=>p.OrganizationId==org),tasks=await db.Tasks.CountAsync(t=>t.OrganizationId==org),collaborators=await db.Users.CountAsync(u=>u.OrganizationId==org)});});
+        ui.MapGet("/counts", async (ClaimsPrincipal actor, ISender sender, CancellationToken cancellationToken) =>
+        {
+            var counts = await sender.Send(new GetDashboardCountsQuery(Org(actor)), cancellationToken);
+            return Results.Ok(new { projects = counts.Projects, tasks = counts.Tasks, collaborators = counts.Collaborators });
+        });
         ui.MapGet("/project-options",async(ClaimsPrincipal actor,TasksDb db)=>Results.Ok(await db.Projects.AsNoTracking().Where(p=>p.OrganizationId==Org(actor)).OrderBy(p=>p.Name).Select(p=>new{p.Id,p.Name}).ToListAsync()));
         ui.MapGet("/collaborators", async (ClaimsPrincipal actor, TasksDb db) =>
         {
@@ -70,17 +78,11 @@ public static class FrontendEndpoints
             db.Projects.Remove(project); await db.SaveChangesAsync(); return Results.Ok(new { deleted = true });
         }).RequireAuthorization(p => p.RequireRole("Owner"));
 
-        ui.MapPost("/tasks", async (FrontendTask r, ClaimsPrincipal actor, TasksDb db) =>
+        ui.MapPost("/tasks", async (FrontendTask r, ClaimsPrincipal actor, ISender sender, CancellationToken cancellationToken) =>
         {
-            var org = Org(actor);
-            if (!await db.Projects.AnyAsync(x => x.Id == r.ProjectId && x.OrganizationId == org)) return Results.NotFound();
-            if (!ValidName(r.Name) || r.Description?.Length > 4000) return Error("Nome ou descrição da tarefa inválidos.");
-            if (!await ValidCollaborator(r.CollaboratorId, org, db)) return Results.NotFound();
-            if (!ValidDates(r.StartDate?.UtcDateTime, r.EndDate?.UtcDateTime)) return Error("O fim deve ser posterior ao início. Cada apontamento pode ter no máximo 24 horas.");
-            var task = new WorkTask { OrganizationId = org, ProjectId = r.ProjectId, Title = r.Name.Trim(), Description = r.Description?.Trim() ?? "" };
-            var entry = NewEntry(task.Id, actor, r.CollaboratorId, r.StartDate, r.EndDate);
-            db.Tasks.Add(task); db.TimeEntries.Add(entry); await db.SaveChangesAsync();
-            return Results.Created($"/app-api/tasks/{task.Id}", new { task.Id });
+            var taskId = await sender.Send(new CreateAssignedTaskCommand(
+                Org(actor), Actor(actor), r.ProjectId, r.Name, r.Description, r.CollaboratorId, r.StartDate, r.EndDate), cancellationToken);
+            return taskId is null ? Results.NotFound() : Results.Created($"/app-api/tasks/{taskId}", new { Id = taskId });
         });
         ui.MapPut("/tasks/{id:guid}", async (Guid id, FrontendTask r, ClaimsPrincipal actor, TasksDb db) =>
         {
